@@ -147,3 +147,9 @@ python miniapp.py   # в другом терминале
 | `GET` | `/api/server` | Статус сервера |
 | `GET` | `/api/ping` | Пинг до VPN-сервера (ICMP, серверная сторона) |
 | `POST` | `/api/validate_hash` | Валидация Telegram initData |
+
+
+Зависимости:
+
+Для работы проекта требуется внешний AMNEZIA-API:
+Репозиторий: https://github.com/kyoresuas/amnezia-api
