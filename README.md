@@ -47,7 +47,8 @@ bot/
 
 ```bash
 # 1. Скопировать файлы бота
-cd /root/bot
+git clone https://github.com/dqlpq/AmneziaTGBot.git
+cd AmneziaTGBot/bot
 
 # 2. Создать виртуальное окружение
 python3 -m venv /root/me
@@ -57,7 +58,8 @@ source /root/me/bin/activate
 pip install -r requirements.txt
 
 # 4. Настроить .env
-nano .env
+cp .env.example .env
+micro .env
 ```
 
 ## Конфигурация `.env`
@@ -82,15 +84,15 @@ nano .env
 ### Через screen (рекомендуется)
 
 ```bash
-chmod +x /root/bot/start.sh
-/root/bot/start.sh
+chmod +x start.sh
+bash start.sh
 ```
 
 `start.sh` запускает бота и Mini App в отдельных screen-сессиях:
 
 ```bash
-screen -r vpnbot    # подключиться к боту
-screen -r vpnmini   # подключиться к Mini App
+screen -r bot    # подключиться к боту
+screen -r miniapp  # подключиться к Mini App
 screen -ls          # список всех сессий
 # Ctrl+A, D — отключиться от сессии (процесс продолжает работать)
 ```
