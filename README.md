@@ -47,8 +47,8 @@ bot/
 
 ```bash
 # 1. Скопировать файлы бота
-git clone https://github.com/dqlpq/AmneziaTGBot.git
-cd AmneziaTGBot/bot
+git clone https://github.com/dqlpq/amneziatgbot.git
+cd amneziatgbot/bot
 
 # 2. Создать виртуальное окружение
 python3 -m venv /root/me
