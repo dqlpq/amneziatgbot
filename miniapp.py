@@ -1,5 +1,3 @@
-# miniapp.py — Telegram Mini App для AmneziaVPN бота.
-
 import asyncio
 import hashlib
 import hmac
@@ -421,9 +419,9 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
     --green-bg: rgba(61,220,132,0.1); --red-bg: rgba(255,77,77,0.1); --blue-bg: rgba(74,158,255,0.1);
     --radius: 12px; --radius-s: 8px;
   }
-  
+
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  
+
   html, body {
     height: 100%; background: var(--bg); color: var(--text);
     font-family: 'Inter', -apple-system, sans-serif;
@@ -443,13 +441,13 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
   .logo { display: flex; align-items: center; gap: 8px; }
   .logo-icon { font-size: 22px; line-height: 1; }
   .logo-text { font-size: 16px; font-weight: 700; color: var(--white); }
-  
+
   /* Статус и пинг */
   .status-chip { display: flex; align-items: center; gap: 6px; background: var(--s2); border: 1px solid var(--border); border-radius: 20px; padding: 4px 10px; font-size: 12px; font-weight: 500; color: var(--text2); }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text3); flex-shrink: 0; }
   .status-dot.on { background: var(--green); }
   .status-dot.off { background: var(--red); }
-  
+
   .srv-bar { display: flex; align-items: center; justify-content: space-between; background: var(--s2); border: 1px solid var(--border); border-radius: var(--radius-s); padding: 8px 12px; font-size: 12px; }
   .srv-left { display: flex; align-items: center; gap: 8px; color: var(--text2); font-weight: 500; }
   .srv-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); }
@@ -465,7 +463,7 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
   .card-name { font-size: 15px; font-weight: 600; color: var(--white); flex: 1; }
   .card-meta { display: flex; gap: 12px; font-size: 12px; color: var(--text3); font-family: 'JetBrains Mono', monospace; flex-wrap: wrap; }
   .card-date { font-size: 11px; color: var(--text3); font-family: 'JetBrains Mono', monospace; }
-  
+
   .card-foot { display: flex; border-top: 1px solid var(--border); background: var(--bg); }
   .foot-btn { flex: 1; padding: 12px 8px; font-size: 12px; font-weight: 600; color: var(--text2); background: transparent; border: none; cursor: pointer; transition: 0.15s; border-right: 1px solid var(--border); }
   .foot-btn:last-child { border-right: none; }
@@ -484,7 +482,7 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; border: none; border-radius: var(--radius-s); font-weight: 600; font-size: 14px; padding: 14px; cursor: pointer; transition: 0.15s; }
   .btn:active { transform: scale(0.98); }
   .btn:disabled { opacity: 0.5; pointer-events: none; }
-  
+
   .btn-primary { background: var(--white); color: #000; }
   .btn-primary:hover { background: #e0e0e0; }
   .btn-outline { background: transparent; border: 1px solid var(--border2); color: var(--text2); }
@@ -492,7 +490,7 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
   .btn-ghost { background: transparent; color: var(--text3); padding: 10px; font-size: 13px; }
   .btn-danger-outline { background: var(--red-bg); color: var(--red); border: 1px solid rgba(255,77,77,0.3); }
   .btn-danger-outline:hover { background: rgba(255,77,77,0.15); }
-  
+
   .add-card { border: 1px dashed var(--border2); border-radius: var(--radius); padding: 16px; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; color: var(--text3); font-size: 13px; font-weight: 600; background: transparent; transition: 0.15s; }
   .add-card:hover { border-color: var(--text3); color: var(--text2); background: var(--s1); }
 
@@ -516,13 +514,13 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
   .dl-link:hover { background: var(--s3); }
   .dl-link:last-child { border-bottom: none; }
   .dl-left { display: flex; align-items: center; gap: 8px; }
-  
+
   .g-head { padding: 14px; display: flex; justify-content: space-between; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--white); }
   .g-arrow { transition: 0.2s; color: var(--text3); }
   .g-arrow.open { transform: rotate(90deg); }
   .g-body { display: none; padding: 0 14px 14px; gap: 12px; flex-direction: column; }
   .g-body.open { display: flex; }
-  
+
   .step { display: flex; gap: 10px; font-size: 12px; color: var(--text2); align-items: flex-start; line-height: 1.5; }
   .step-n { width: 20px; height: 20px; border-radius: 50%; background: var(--s3); border: 1px solid var(--border2); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; font-family: monospace; }
   code { background: var(--s3); padding: 2px 4px; border-radius: 4px; font-family: monospace; }
@@ -549,7 +547,7 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
   .empty-title { font-size: 14px; font-weight: 600; color: var(--text2); }
   .shimmer { background: linear-gradient(90deg, var(--s1) 25%, var(--s2) 50%, var(--s1) 75%); background-size: 200% 100%; animation: shim 1.2s infinite; border-radius: var(--radius); height: 96px; }
   @keyframes shim { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-  
+
   .toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%) translateY(10px); background: var(--s3); border: 1px solid var(--border2); border-radius: 30px; padding: 10px 20px; font-size: 12px; font-weight: 600; color: var(--text); z-index: 999; opacity: 0; transition: 0.25s; pointer-events: none; box-shadow: 0 4px 20px rgba(0,0,0,0.5); white-space: nowrap; }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
@@ -578,7 +576,7 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
   </header>
 
   <main id="content">
-    
+
     <div id="page-profiles" class="page">
       <div class="section-label">Ваши профили</div>
       <div id="profiles-list" style="display:flex; flex-direction:column; gap:8px;">
@@ -592,21 +590,21 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
 
     <div id="page-key" class="page hidden">
       <div class="section-label">Секретный ключ</div>
-      
+
       <div class="card">
         <div class="card-body">
           <p style="font-size:12px; color:var(--text2); line-height:1.5;">
             Используйте этот ключ на сайте для того, чтобы поделиться VPN с другом, у которого нет доступа к Telegram.<br>
             Один ключ — один профиль. Ключ одноразовый.
           </p>
-          
+
           <div id="key-status-badge" class="badge badge-gr" style="display:none; text-align:center; padding:6px;"></div>
-          
+
           <div class="link-box highlight" onclick="copyKey()">
             <span class="copy-hint">нажать для копирования</span>
             <span id="key-value">Загружаю...</span>
           </div>
-          
+
           <div class="btn-group">
             <button class="btn btn-primary" onclick="copyKey()">📋 Скопировать</button>
             <button class="btn btn-outline" onclick="openSite()">🌐 Сайт</button>
@@ -633,7 +631,7 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
       </div>
 
       <div class="section-label" style="margin-top: 8px;">Способы подключения</div>
-      
+
       <div class="g-section">
         <div class="g-head" onclick="toggleG(this)">
           <div style="display:flex; gap:8px;"><span>📋</span> Способ 1 — Текстовый ключ (vpn://)</div><span class="g-arrow">›</span>
@@ -695,12 +693,12 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
   <div class="sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="cfg-title">Конфиг</div>
-    
+
     <div class="link-box" onclick="copyConfig()">
       <span class="copy-hint">нажать для копирования</span>
       <span id="cfg-content">Загружаю...</span>
     </div>
-    
+
     <div id="short-link-wrap" style="display:none;">
       <div class="field-label" style="margin-bottom:6px">Короткая ссылка (на 24 часа)</div>
       <div class="link-box" onclick="copyShortLink()" style="color:var(--blue); font-weight:600;">
@@ -708,9 +706,9 @@ MINIAPP_HTML = r"""<!DOCTYPE html>
         <span id="short-link-content"></span>
       </div>
     </div>
-    
+
     <div class="g-note" style="margin-top:0">AmneziaVPN → <strong>«+»</strong> → Вставить из буфера</div>
-    
+
     <div class="btn-group">
       <button class="btn btn-primary" onclick="copyConfig()">📋 Скопировать</button>
       <button class="btn btn-outline" onclick="dlConfig()">📥 .vpn</button>
@@ -834,18 +832,18 @@ async function loadProfiles() {
   try {
     const data = await api('/api/me');
     $('user-name').textContent = data.user?.name || 'VPN';
-    
+
     $('add-btn').style.display = data.can_create ? '' : 'none';
-    
+
     if (!data.profiles.length) {
       $('profiles-list').innerHTML = `<div class="empty"><div class="empty-icon">🔐</div><div class="empty-title">Профилей нет</div></div>`;
       return;
     }
-    
+
     $('profiles-list').innerHTML = data.profiles.map(p => {
       const peer = p.peer;
       let dot = 'dis', lbl = 'Неизвестно', bdg = 'badge-gr', meta = [];
-      
+
       if (p.disabled) lbl = 'Отключён';
       else if (peer) {
         if (peer.online) { dot = 'on'; lbl = 'Онлайн'; bdg = 'badge-g'; }
@@ -854,10 +852,10 @@ async function loadProfiles() {
         if (peer.tx && peer.tx !== '0 Б') meta.push(`⬆ ${peer.tx}`);
         if (peer.protocol) meta.push(peer.protocol);
       }
-      
+
       const metaHtml = meta.length ? `<div class="card-meta">${meta.map(s=>`<span>${esc(s)}</span>`).join('')}</div>` : '';
       const dateHtml = p.created_at ? `<div class="card-date">${p.created_at.slice(0,10)}</div>` : '';
-      
+
       return `
         <div class="card">
           <div class="card-body">
@@ -874,7 +872,7 @@ async function loadProfiles() {
           </div>
         </div>`;
     }).join('');
-    
+
   } catch(e) {
     $('profiles-list').innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">${esc(e.message)}</div></div>`;
   }
@@ -894,10 +892,10 @@ $('name-input').addEventListener('keydown', e => e.key === 'Enter' && doCreate()
 async function doCreate() {
   const name = $('name-input').value.trim();
   const err = msg => { $('name-hint').textContent=msg; $('name-hint').className='field-hint err'; $('name-input').className='input err'; };
-  
+
   if (!name) return err('Введите имя');
   if (!/^[a-zA-Zа-яА-Я0-9ёЁ]{1,16}$/.test(name)) return err('Только буквы и цифры, до 16 символов');
-  
+
   $('create-btn').disabled = true; $('create-btn').textContent = 'Создаю...';
   try {
     await api('/api/create', { method:'POST', body:JSON.stringify({name}) });
@@ -917,7 +915,7 @@ async function getConfig(id, name) {
   $('cfg-content').textContent = 'Загружаю...';
   $('short-link-wrap').style.display = 'none';
   currentConfig = currentShortLink = null; currentCfgName = name;
-  
+
   try {
     const d = await api(`/api/config/${id}`);
     currentConfig = d.config;
@@ -980,7 +978,7 @@ async function loadKey() {
     const d = await api('/api/mykey');
     _currentKey = d.key; _siteUrl = d.site_url; _keyLoaded = true;
     $('key-value').textContent = d.key;
-    
+
     const badge = $('key-status-badge');
     badge.style.display = 'block';
     if (d.used) {
@@ -1007,11 +1005,11 @@ async function doNewKey() {
     const d = await api('/api/newkey', { method: 'POST' });
     _currentKey = d.key; _siteUrl = d.site_url;
     $('key-value').textContent = d.key;
-    
+
     $('key-status-badge').textContent = '⏳ Новый ключ активен';
     $('key-status-badge').className = 'badge badge-g';
     $('key-status-badge').style.display = 'block';
-    
+
     showToast('🔄 Новый ключ создан');
     tg?.HapticFeedback?.notificationOccurred('success');
   } catch(e) { showToast('❌ ' + e.message); $('key-value').textContent = _currentKey || '—'; }

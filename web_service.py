@@ -1,8 +1,3 @@
-"""
-web_service.py — Публичный веб-сервис для подключения VPN по секретному ключу.
-Запускается вместе с miniapp.py.
-"""
-
 import asyncio
 import html
 import json
@@ -191,7 +186,7 @@ WEB_HTML = r"""<!DOCTYPE html>
 
   <div class="card hidden" id="result-block">
     <div class="card-title result-title">✓ Конфигурация готова</div>
-    
+
     <div class="field">
       <div style="display:flex; justify-content:space-between; align-items:flex-end;">
         <label class="label">Строка vpn://</label>
@@ -259,7 +254,7 @@ WEB_HTML = r"""<!DOCTYPE html>
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2200);
   };
-  
+
   const showError = (msg) => {
     if(!msg) return $('error-card').classList.remove('show');
     $('error-card').textContent = msg;
@@ -303,7 +298,7 @@ WEB_HTML = r"""<!DOCTYPE html>
     if (!/^[a-zA-Zа-яА-ЯёЁ0-9]{1,16}$/.test(name)) return showError('Имя: только буквы/цифры, до 16 симв.');
 
     btn.disabled = true; btn.textContent = 'Подключаю…';
-    
+
     try {
       const resp = await fetch('/connect', {
         method: 'POST',
@@ -311,18 +306,18 @@ WEB_HTML = r"""<!DOCTYPE html>
         body: JSON.stringify({ key, name }),
       });
       const data = await resp.json();
-      
+
       if (!resp.ok || data.error) throw new Error(data.error || 'Ошибка сервера');
-      
+
       _config = data.config; _shortLink = data.short_link;
       $('config-text').textContent = data.config;
       $('short-link-text').textContent = data.short_link;
-      
+
       $('form-card').classList.add('hidden');
       $('result-block').classList.remove('hidden');
-      
+
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      
+
     } catch(e) {
       showError(e.message === 'Failed to fetch' ? 'Сетевая ошибка. Попробуйте ещё раз.' : e.message);
     } finally {
@@ -338,11 +333,11 @@ WEB_HTML = r"""<!DOCTYPE html>
       $('ping-dot').className = 'ping-dot ' + (ms < 100 ? 'good' : ms < 250 ? 'warn' : 'bad');
     } catch (e) {}
   }
-  
+
   document.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !$('form-card').classList.contains('hidden')) doConnect();
   });
-  
+
   fetchPing();
   setInterval(fetchPing, 180000);
 </script>

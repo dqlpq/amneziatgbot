@@ -1,7 +1,3 @@
-"""
-AmneziaVPN Telegram Bot — мультипрофильная версия
-"""
-
 import asyncio
 import html
 import json
@@ -44,8 +40,6 @@ MAX_INPUT_LENGTH = 4096
 VPN_NAME_RE = re.compile(r"^[a-zA-Z\u0430-\u044f\u0410-\u042f\u0451\u04010-9]+$")
 
 
-# ──────────────────────────── Middleware ────────────────────────────
-
 class DIMiddleware(BaseMiddleware):
     def __init__(self, db, amnezia):
         self.db = db
@@ -84,7 +78,6 @@ class ThrottlingMiddleware(BaseMiddleware):
 
 
 class BannedUserMiddleware(BaseMiddleware):
-    """Блокирует взаимодействия от забаненных пользователей."""
 
     async def __call__(self, handler, event, data):
         db: Database = data.get("db")
@@ -116,8 +109,6 @@ class CreateUserStates(StatesGroup):
     waiting_for_name = State()
 
 
-# ──────────────────────────── Валидация ─────────────────────────────
-
 def sanitize_text(text: str) -> str:
     if not text:
         return ""
@@ -135,8 +126,6 @@ def validate_vpn_name(name: str) -> tuple[bool, str]:
         return False, "Только буквы (латиница/кириллица) и цифры."
     return True, ""
 
-
-# ──────────────────────────── Хендлеры ──────────────────────────────
 
 async def _build_main_menu(uid: int, db: Database) -> tuple[str, Any]:
     user_data = await db.get_user(uid)
@@ -187,7 +176,6 @@ async def cmd_menu(message: Message, state: FSMContext, db: Database):
 
 
 async def cmd_mykey(message: Message, db: Database):
-    """Генерирует или показывает секретный ключ пользователя для веб-сервиса."""
     uid = message.from_user.id if message.from_user else None
     if uid is None or not is_allowed(uid):
         return
@@ -197,7 +185,6 @@ async def cmd_mykey(message: Message, db: Database):
     except Exception:
         pass
 
-    # Проверяем блокировку
     blocked = await db.get_user_key_blocked(uid)
     if blocked:
         await message.answer(
@@ -206,7 +193,6 @@ async def cmd_mykey(message: Message, db: Database):
         )
         return
 
-    # Проверяем существующий ключ
     existing = await db.get_secret_key_by_user(uid)
     if existing and not existing.get("revoked"):
         key_val = existing["key_value"]
@@ -224,7 +210,6 @@ async def cmd_mykey(message: Message, db: Database):
         )
         return
 
-    # Генерируем новый ключ
     key_val = generate_secret_key()
     await db.create_secret_key(uid, key_val)
     domain = settings.SHORT_LINK_DOMAIN.rstrip("/") if hasattr(settings, "SHORT_LINK_DOMAIN") else "dqpq.ru"
@@ -239,7 +224,6 @@ async def cmd_mykey(message: Message, db: Database):
 
 
 async def cmd_newkey(message: Message, db: Database):
-    """Перегенерирует секретный ключ."""
     uid = message.from_user.id if message.from_user else None
     if uid is None or not is_allowed(uid):
         return
@@ -296,8 +280,6 @@ async def cb_cancel(callback: CallbackQuery, state: FSMContext, db: Database):
 async def cb_noop(callback: CallbackQuery):
     await callback.answer()
 
-
-# ──────────────────────────── Создание профиля ──────────────────────
 
 async def cb_create_vpn(callback: CallbackQuery, state: FSMContext, db: Database):
     uid = callback.from_user.id
@@ -456,10 +438,7 @@ async def cb_confirm_create(callback: CallbackQuery, state: FSMContext,
         )
 
 
-# ──────────────────────────── Получить конфиг ───────────────────────
-
 async def cb_get_config(callback: CallbackQuery, state: FSMContext, db: Database):
-    """Показывает список профилей для выбора конфига."""
     uid = callback.from_user.id
     profiles = await db.get_profiles(uid)
     if not profiles:
@@ -467,7 +446,6 @@ async def cb_get_config(callback: CallbackQuery, state: FSMContext, db: Database
         return
 
     if len(profiles) == 1:
-        # Если профиль один — сразу выдаём конфиг
         await _send_config_for_profile(callback, state, db, profiles[0])
         return
 
@@ -483,7 +461,6 @@ async def cb_get_config(callback: CallbackQuery, state: FSMContext, db: Database
 
 async def cb_get_config_profile(callback: CallbackQuery, state: FSMContext,
                                  db: Database, amnezia: AmneziaClient):
-    """Конфиг конкретного профиля (выбор из списка)."""
     parts = callback.data.split(":", 1)
     if len(parts) < 2:
         await callback.answer("❌ Некорректные данные.", show_alert=True)
@@ -567,10 +544,7 @@ async def _send_config_for_profile(callback: CallbackQuery, state: FSMContext,
     await state.update_data(menu_msg_id=sm.message_id)
 
 
-# ──────────────────────────── Мои профили ───────────────────────────
-
 async def cb_my_profiles(callback: CallbackQuery, db: Database):
-    """Список профилей пользователя."""
     uid = callback.from_user.id
     profiles = await db.get_profiles(uid)
     if not profiles:
@@ -587,7 +561,6 @@ async def cb_my_profiles(callback: CallbackQuery, db: Database):
 
 
 async def cb_my_info_profile(callback: CallbackQuery, db: Database, amnezia: AmneziaClient):
-    """Информация о конкретном профиле пользователя."""
     parts = callback.data.split(":", 1)
     if len(parts) < 2:
         await callback.answer("❌ Некорректные данные.", show_alert=True)
@@ -674,10 +647,7 @@ async def cb_my_info_profile(callback: CallbackQuery, db: Database, amnezia: Amn
     )
 
 
-# ──────────────────────────── Удаление профиля пользователем ───────
-
 async def cb_user_del_profile(callback: CallbackQuery, db: Database):
-    """Запрос подтверждения удаления профиля самим пользователем."""
     uid = callback.from_user.id
     parts = callback.data.split(":", 1)
     if len(parts) < 2 or not parts[1].isdigit():
@@ -702,7 +672,6 @@ async def cb_user_del_profile(callback: CallbackQuery, db: Database):
 
 async def cb_user_del_profile_do(callback: CallbackQuery, db: Database,
                                   amnezia: AmneziaClient):
-    """Подтверждённое удаление профиля самим пользователем."""
     uid = callback.from_user.id
     parts = callback.data.split(":", 1)
     if len(parts) < 2 or not parts[1].isdigit():
@@ -724,7 +693,6 @@ async def cb_user_del_profile_do(callback: CallbackQuery, db: Database,
 
     await db.delete_profile(profile_id)
 
-    # Уведомляем администраторов
     uname = callback.from_user.username or ""
     safe_u = html.escape(uname)
     tg_ref = f"@{safe_u}" if safe_u else html.escape(callback.from_user.first_name or "")
@@ -750,8 +718,6 @@ async def cb_user_del_profile_do(callback: CallbackQuery, db: Database,
         reply_markup=kb_main(has_profiles=has_profiles, can_create=can_create, admin=admin),
     )
 
-
-# ──────────────────────────── Статус сервера ────────────────────────
 
 async def cb_server_status(callback: CallbackQuery, amnezia: AmneziaClient):
     await safe_edit(callback.message, "⏳ Запрашиваю данные сервера…")
@@ -785,8 +751,6 @@ async def cb_server_status(callback: CallbackQuery, amnezia: AmneziaClient):
     )
 
 
-# ──────────────────────────── Команды бота ──────────────────────────
-
 async def set_bot_commands(bot: Bot):
     commands = [
         BotCommand(command="start",  description="🏠 Главное меню"),
@@ -796,8 +760,6 @@ async def set_bot_commands(bot: Bot):
     ]
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 
-
-# ──────────────────────────── main ──────────────────────────────────
 
 async def main():
     bot = Bot(
@@ -825,19 +787,15 @@ async def main():
     dp.message.middleware(banned_mw)
     dp.callback_query.middleware(banned_mw)
 
-    # Команды
     dp.message.register(cmd_start,  CommandStart())
     dp.message.register(cmd_menu,   Command("menu"))
     dp.message.register(cmd_mykey,  Command("mykey"))
     dp.message.register(cmd_newkey, Command("newkey"))
 
-    # FSM
     dp.message.register(process_vpn_name, CreateUserStates.waiting_for_name, F.text)
 
-    # Catch-all
     dp.message.register(catch_all_messages)
 
-    # Callbacks
     dp.callback_query.register(cb_back_main,          F.data == "back_main")
     dp.callback_query.register(cb_cancel,              F.data == "cancel")
     dp.callback_query.register(cb_noop,                F.data == "noop")

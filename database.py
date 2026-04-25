@@ -1,17 +1,3 @@
-"""
-Асинхронная база данных на SQLite через aiosqlite.
-
-Новая схема: один пользователь (telegram_id) → несколько профилей (vpn_profiles).
-  - Таблица users: telegram_id, banned, key_blocked, created_at
-  - Таблица vpn_profiles: id, telegram_id, vpn_name, peer_id, raw_response,
-                           last_ip, created_at, disabled
-  - Таблица secret_keys: id, telegram_id, key_value, used, revoked, can_create, created_at, used_at
-  - Таблица short_links: id, profile_id, slug, created_at
-
-Лимит профилей: MAX_PROFILES_PER_USER = 3.
-Автоматическая миграция со старой схемы + автодобавление отсутствующих колонок.
-"""
-
 import aiosqlite
 import logging
 from typing import Optional
@@ -28,7 +14,6 @@ class Database:
         self.fernet = Fernet(encryption_key.encode("utf-8"))
         self._conn: Optional[aiosqlite.Connection] = None
 
-    # ─────────────────── Шифрование ───────────────────────────────
 
     def _encrypt(self, data: str | None) -> str | None:
         if not data:
@@ -43,7 +28,6 @@ class Database:
         except InvalidToken:
             return data
 
-    # ─────────────────── Вспомогательные методы для миграций ──────
 
     async def _column_exists(self, table: str, column: str) -> bool:
         async with self._conn.execute(f"PRAGMA table_info({table})") as cur:
@@ -69,7 +53,6 @@ class Database:
                 logger.warning("Не удалось добавить колонку %s.%s: %s", table, column, e)
         return False
 
-    # ─────────────────── Инициализация и миграции ─────────────────
 
     async def init(self):
         self._conn = await aiosqlite.connect(self.db_path)
@@ -224,7 +207,6 @@ class Database:
             await self._conn.close()
             logger.info("Database connection closed.")
 
-    # ─────────────────── Вспомогательное ──────────────────────────
 
     def _profile_row_to_dict(self, row: aiosqlite.Row) -> dict:
         d = dict(row)
@@ -234,7 +216,6 @@ class Database:
         d["disabled"] = bool(d.get("disabled", 0))
         return d
 
-    # ─────────────────── Пользователи ─────────────────────────────
 
     async def ensure_user(self, telegram_id: int) -> None:
         await self._conn.execute("INSERT OR IGNORE INTO users (telegram_id) VALUES (?)", (telegram_id,))
@@ -253,7 +234,6 @@ class Database:
         async with self._conn.execute("SELECT telegram_id FROM users") as cur:
             return [r[0] for r in await cur.fetchall()]
 
-    # ─────────────────── Профили ──────────────────────────────────
 
     async def get_profiles(self, telegram_id: int) -> list[dict]:
         async with self._conn.execute("SELECT * FROM vpn_profiles WHERE telegram_id=? ORDER BY created_at", (telegram_id,)) as cur:
@@ -314,7 +294,6 @@ class Database:
         await self._conn.execute("UPDATE vpn_profiles SET last_ip=? WHERE id=?", (self._encrypt(ip), profile_id))
         await self._conn.commit()
 
-    # ─────────────────── Сводные запросы ──────────────────────────
 
     async def get_all_users_with_profiles(self) -> list[dict]:
         async with self._conn.execute("SELECT * FROM users ORDER BY created_at DESC") as cur:
@@ -369,7 +348,6 @@ class Database:
             "profiles": profiles,
         }
 
-    # ─────────────────── Секретные ключи ──────────────────────────
 
     async def create_secret_key(self, telegram_id: int, key_value: str) -> int:
         await self.ensure_user(telegram_id)
@@ -427,10 +405,8 @@ class Database:
             keys = row.keys() if hasattr(row, "keys") else []
             return bool(row["key_blocked"]) if "key_blocked" in keys else False
 
-    # ─────────────────── Короткие ссылки ──────────────────────────
 
     async def _cleanup_expired_short_links(self):
-        """Удаляет ссылки старше 24 часов"""
         try:
             await self._conn.execute(
                 "DELETE FROM short_links WHERE datetime(created_at) <= datetime('now', 'localtime', '-1 day')"

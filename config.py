@@ -1,38 +1,28 @@
-"""
-Конфигурация бота. Загружает переменные из .env файла.
-"""
-
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
 
 
 class Settings(BaseSettings):
-    # Telegram
     BOT_TOKEN: str
     ADMIN_IDS: list[int]
-    BOT_MODE: str = "all"  # "all" или "admin"
+    BOT_MODE: str = "all"
 
     VPN_HOST: str = ""
 
-    # Amnezia API
     AMNEZIA_API_URL: str = "http://127.0.0.1:4001"
     AMNEZIA_API_KEY: str
     AMNEZIA_PROTOCOL: str = "amneziawg2"
 
-    # Database & Security
     DB_PATH: str = "./bot_data.db"
     DB_ENCRYPTION_KEY: str
 
-    # Mini App (Flask)
     MINIAPP_HOST: str = "0.0.0.0"
     MINIAPP_PORT: int = 5000
-    MINIAPP_DEV_MODE: bool = False  # True = пропускать проверку подписи Telegram
+    MINIAPP_DEV_MODE: bool = False
 
-    # Web сервис (публичный сайт для подключения по ключу)
     WEB_HOST: str = "0.0.0.0"
     WEB_PORT: int = 5001
 
-    # Домен для сокращённых ссылок (например dqpq.ru)
     SHORT_LINK_DOMAIN: str = "dqpq.ru"
 
     @field_validator("ADMIN_IDS", mode="before")

@@ -1,8 +1,3 @@
-"""
-shared.py — общие утилиты, хелперы и клавиатуры.
-Импортируется как bot.py, так и admin_handlers.py.
-"""
-
 import html
 import time
 import hmac
@@ -24,14 +19,10 @@ from aiogram.types import (
 from config import settings
 from database import MAX_PROFILES_PER_USER
 
-PAGE_SIZE = 10  # пользователей на страницу в списке
+PAGE_SIZE = 10
 
 
 def generate_dynamic_token() -> str:
-    """
-    Генерирует постоянно меняющийся токен на основе текущего времени.
-    Защищает публичные POST-запросы от спама и повторного использования (Replay attacks).
-    """
     ts = int(time.time())
     msg = f"{ts}".encode('utf-8')
     sig = hmac.new(settings.DB_ENCRYPTION_KEY.encode(), msg, hashlib.sha256).hexdigest()
@@ -39,30 +30,25 @@ def generate_dynamic_token() -> str:
 
 
 def verify_dynamic_token(token: str, max_age_seconds: int = 300) -> bool:
-    """
-    Проверяет подлинность токена и его срок годности (по умолчанию 5 минут).
-    """
     if not token or '.' not in token:
         return False
     try:
         ts_str, sig = token.split('.', 1)
         ts = int(ts_str)
-        
+
         if int(time.time()) - ts > max_age_seconds:
             return False
-            
+
         expected_sig = hmac.new(settings.DB_ENCRYPTION_KEY.encode(), ts_str.encode('utf-8'), hashlib.sha256).hexdigest()
         return hmac.compare_digest(sig, expected_sig)
     except Exception:
         return False
 
 
-# ──────────────────────────── Пинг (глобальный кэш) ─────────────────
 _ping_cache = {"ms": 0, "ts": 0}
-_PING_TTL = 180  # 3 минуты (180 секунд)
+_PING_TTL = 180
 
 def get_shared_ping(host: str, api_url: str) -> int:
-    """Один пинг на всех пользователей (обновляется раз в 3 минуты)."""
     now = time.monotonic()
     if _ping_cache["ms"] == 0 or (now - _ping_cache["ts"]) >= _PING_TTL:
         ms = 0
@@ -72,7 +58,7 @@ def get_shared_ping(host: str, api_url: str) -> int:
             if m: ms = round(float(m.group(1)))
         except Exception:
             pass
-        
+
         if ms == 0:
             try:
                 t0 = time.monotonic()
@@ -81,14 +67,12 @@ def get_shared_ping(host: str, api_url: str) -> int:
                 ms = round((time.monotonic() - t0) * 1000)
             except Exception:
                 pass
-                
+
         _ping_cache["ms"] = ms
         _ping_cache["ts"] = now
-        
+
     return _ping_cache["ms"]
 
-
-# ──────────────────────────── Права ─────────────────────────────────
 
 def is_admin(user_id: int) -> bool:
     return user_id in settings.ADMIN_IDS
@@ -97,8 +81,6 @@ def is_admin(user_id: int) -> bool:
 def is_allowed(user_id: int) -> bool:
     return True if settings.BOT_MODE != "admin" else is_admin(user_id)
 
-
-# ──────────────────────────── Форматирование ────────────────────────
 
 def fmt_bytes(b: float) -> str:
     if not b:
@@ -153,8 +135,6 @@ def menu_text(user_data: dict | None, notice: str = "") -> str:
     )
 
 
-# ──────────────────────────── Aiogram helpers ───────────────────────
-
 async def safe_edit(msg: Message, text: str, reply_markup=None, parse_mode=ParseMode.HTML) -> None:
     try:
         await msg.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
@@ -185,8 +165,6 @@ async def pop_side_msgs(state: FSMContext) -> list[int]:
     return ids
 
 
-# ──────────────────────────── Peer utils ────────────────────────────
-
 def find_peer_in_clients(clients_data: dict | None, username: str) -> dict | None:
     if not clients_data:
         return None
@@ -208,8 +186,6 @@ def count_online_peers(clients_data: dict | None) -> tuple[int, int]:
                 online += 1
     return online, total
 
-
-# ──────────────────────────── Пагинация (пользователи) ──────────────
 
 def paginate_users(users: list[dict], page: int) -> tuple[list[dict], int]:
     total_pages = max(1, ceil(len(users) / PAGE_SIZE))
@@ -240,8 +216,6 @@ def build_users_page_text(users_page: list[dict], page: int,
     footer = "<i>👁 карточка · 🚫/✅ бан · 🗑 удалить профиль</i>"
     return f"{header}\n\n{body}\n\n{footer}"
 
-
-# ──────────────────────────── Клавиатуры ────────────────────────────
 
 def kb_main(has_profiles: bool, can_create: bool, admin: bool = False) -> InlineKeyboardMarkup:
     rows = []
