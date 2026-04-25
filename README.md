@@ -85,7 +85,8 @@ git clone https://github.com/amnezia-vpn/amnezia-api.git
 cd amnezia-api
 
 # 2. Установить зависимости
-npm install
+pip install -r requirements.txt
+sudo apt install screen
 
 # 3. Настроить .env
 cp .env.example .env
@@ -105,19 +106,14 @@ FASTIFY_API_KEY=your_secret_api_key_here
 DEFAULT_PROTOCOL=amneziawg2
 ```
 
-### Запуск amnezia-api
+### Запуск/остановка amnezia-api
 
 ```bash
-# Через screen
-screen -S amnezia-api
-node index.js
-# Ctrl+A, D — свернуть
+# start.sh
+bash start.sh
+# stop.sh
+bash stop.sh
 
-# Или через PM2
-npm install -g pm2
-pm2 start index.js --name amnezia-api
-pm2 save && pm2 startup
-```
 
 ### Проверка работоспособности
 
