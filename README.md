@@ -1,6 +1,6 @@
 # AmneziaVPN Telegram Bot
 
-Telegram-бот для управления VPN-профилями [AmneziaVPN](https://amnezia.org) через [amnezia-api]([https://github.com/amnezia-vpn/amnezia-api](https://github.com/kyoresuas/amnezia-api)). Поддерживает мультипрофили, полноценную админ-панель, Telegram Mini App и публичный веб-сервис для выдачи конфигов по секретному ключу.
+Telegram-бот для управления VPN-профилями [AmneziaVPN](https://amnezia.org) через [amnezia-api](https://github.com/kyoresuas/amnezia-api). Поддерживает мультипрофили, полноценную админ-панель, Telegram Mini App и публичный веб-сервис для выдачи конфигов по секретному ключу.
 
 ---
 
