@@ -1,3 +1,17 @@
+"""
+Асинхронная база данных на SQLite через aiosqlite.
+
+Новая схема: один пользователь (telegram_id) → несколько профилей (vpn_profiles).
+  - Таблица users: telegram_id, banned, key_blocked, created_at
+  - Таблица vpn_profiles: id, telegram_id, vpn_name, peer_id, raw_response,
+                           last_ip, created_at, disabled
+  - Таблица secret_keys: id, telegram_id, key_value, used, revoked, can_create, created_at, used_at
+  - Таблица short_links: id, profile_id, slug, created_at
+
+Лимит профилей: MAX_PROFILES_PER_USER = 3.
+Автоматическая миграция со старой схемы + автодобавление отсутствующих колонок.
+"""
+
 import aiosqlite
 import logging
 from typing import Optional
@@ -27,7 +41,33 @@ class Database:
         try:
             return self.fernet.decrypt(data.encode("utf-8")).decode("utf-8")
         except InvalidToken:
-            return data  # старые незашифрованные данные
+            return data
+
+    # ─────────────────── Вспомогательные методы для миграций ──────
+
+    async def _column_exists(self, table: str, column: str) -> bool:
+        async with self._conn.execute(f"PRAGMA table_info({table})") as cur:
+            rows = await cur.fetchall()
+            return any(row[1] == column for row in rows)
+
+    async def _table_exists(self, table: str) -> bool:
+        async with self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ) as cur:
+            return await cur.fetchone() is not None
+
+    async def _add_column_if_missing(self, table: str, column: str, definition: str) -> bool:
+        if not await self._column_exists(table, column):
+            try:
+                await self._conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                )
+                await self._conn.commit()
+                logger.info("Добавлена колонка %s.%s", table, column)
+                return True
+            except Exception as e:
+                logger.warning("Не удалось добавить колонку %s.%s: %s", table, column, e)
+        return False
 
     # ─────────────────── Инициализация и миграции ─────────────────
 
@@ -39,11 +79,11 @@ class Database:
         await self._conn.execute("PRAGMA synchronous=NORMAL;")
         await self._conn.execute("PRAGMA foreign_keys=ON;")
 
-        # ── Новые таблицы ───────────────────────────────────────
         await self._conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 telegram_id INTEGER PRIMARY KEY,
                 banned      INTEGER NOT NULL DEFAULT 0,
+                key_blocked INTEGER NOT NULL DEFAULT 0,
                 created_at  TEXT DEFAULT (datetime('now', 'localtime'))
             )
         """)
@@ -60,55 +100,83 @@ class Database:
                 created_at   TEXT DEFAULT (datetime('now', 'localtime'))
             )
         """)
-        await self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_profiles_tgid ON vpn_profiles(telegram_id)"
-        )
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_profiles_tgid ON vpn_profiles(telegram_id)")
+
+        await self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS secret_keys (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id  INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+                key_value    TEXT    NOT NULL UNIQUE,
+                used         INTEGER NOT NULL DEFAULT 0,
+                revoked      INTEGER NOT NULL DEFAULT 0,
+                can_create   INTEGER NOT NULL DEFAULT 1,
+                created_at   TEXT DEFAULT (datetime('now', 'localtime')),
+                used_at      TEXT
+            )
+        """)
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_secret_keys_tgid ON secret_keys(telegram_id)")
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_secret_keys_value ON secret_keys(key_value)")
+
+        await self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS short_links (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id  INTEGER NOT NULL REFERENCES vpn_profiles(id) ON DELETE CASCADE,
+                slug        TEXT    NOT NULL UNIQUE,
+                created_at  TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
+        await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_short_links_slug ON short_links(slug)")
+        await self._conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_short_links_profile ON short_links(profile_id)")
 
         await self._conn.commit()
 
-        # ── Миграция с прежней схемы ────────────────────────────
+        await self._auto_migrate_schema()
         await self._migrate_from_old_schema()
-
-        # ── Миграция: дошифровать старые данные в vpn_profiles ──
         await self._encrypt_plain_data()
 
         logger.info("Database initialized: %s", self.db_path)
 
+    async def _auto_migrate_schema(self):
+        await self._add_column_if_missing("users", "key_blocked", "INTEGER NOT NULL DEFAULT 0")
+        await self._add_column_if_missing("vpn_profiles", "disabled", "INTEGER NOT NULL DEFAULT 0")
+        await self._add_column_if_missing("vpn_profiles", "last_ip", "TEXT")
+        await self._add_column_if_missing("vpn_profiles", "raw_response", "TEXT")
+
+        if await self._table_exists("secret_keys"):
+            await self._add_column_if_missing("secret_keys", "used_at", "TEXT")
+            await self._add_column_if_missing("secret_keys", "revoked", "INTEGER NOT NULL DEFAULT 0")
+            await self._add_column_if_missing("secret_keys", "can_create", "INTEGER NOT NULL DEFAULT 1")
+
     async def _migrate_from_old_schema(self):
-        """Перенос данных из vpn_users → users + vpn_profiles."""
-        async with self._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='vpn_users'"
-        ) as cur:
-            if not await cur.fetchone():
-                return  # старой таблицы нет — миграция не нужна
+        if not await self._table_exists("vpn_users"):
+            return
 
         logger.info("Обнаружена старая таблица vpn_users, выполняю миграцию…")
-
         async with self._conn.execute("SELECT * FROM vpn_users") as cur:
             rows = await cur.fetchall()
 
         migrated = 0
+        col_names = [d[0] for d in cur.description] if rows else []
+
         for row in rows:
-            tg_id = row["telegram_id"]
-            vpn_name = row["vpn_name"]
-            peer_id = row["peer_id"]
-            raw_resp = row["raw_response"]
-            banned = row["banned"] if "banned" in row.keys() else 0
-            last_ip_val = row["last_ip"] if "last_ip" in row.keys() else None
-            created_at = row["created_at"] if "created_at" in row.keys() else None
+            row_dict = dict(zip(col_names, row)) if col_names else dict(row)
+            tg_id = row_dict.get("telegram_id")
+            vpn_name = row_dict.get("vpn_name")
+            peer_id = row_dict.get("peer_id")
+            raw_resp = row_dict.get("raw_response")
+            banned = row_dict.get("banned", 0)
+            last_ip_val = row_dict.get("last_ip")
+            created_at = row_dict.get("created_at")
 
             try:
-                # Вставляем в users
                 await self._conn.execute(
                     "INSERT OR IGNORE INTO users (telegram_id, banned, created_at) VALUES (?, ?, ?)",
                     (tg_id, banned, created_at),
                 )
-                # Шифруем поля если нужно
                 enc_peer = peer_id if (peer_id and peer_id.startswith("gAAAAA")) else self._encrypt(peer_id)
                 enc_raw = raw_resp if (raw_resp and raw_resp.startswith("gAAAAA")) else self._encrypt(raw_resp)
                 enc_ip = last_ip_val if (last_ip_val and last_ip_val.startswith("gAAAAA")) else self._encrypt(last_ip_val)
 
-                # Вставляем профиль
                 await self._conn.execute(
                     """INSERT OR IGNORE INTO vpn_profiles
                        (telegram_id, vpn_name, peer_id, raw_response, last_ip, created_at)
@@ -117,24 +185,23 @@ class Database:
                 )
                 migrated += 1
             except Exception as e:
-                logger.warning("Миграция строки tg=%d: %s", tg_id, e)
+                logger.warning("Миграция строки tg=%s: %s", tg_id, e)
 
         await self._conn.commit()
-
-        # Переименовываем старую таблицу чтобы не мигрировать повторно
         await self._conn.execute("ALTER TABLE vpn_users RENAME TO vpn_users_migrated")
         await self._conn.commit()
         logger.info("Миграция завершена: перенесено %d записей.", migrated)
 
     async def _encrypt_plain_data(self):
-        """Дошифровывает незашифрованные поля в vpn_profiles."""
         async with self._conn.execute(
             "SELECT id, peer_id, raw_response, last_ip FROM vpn_profiles"
         ) as cur:
             rows = await cur.fetchall()
 
         for row in rows:
-            pid, raw, lip = row["peer_id"], row["raw_response"], row["last_ip"]
+            pid = row["peer_id"]
+            raw = row["raw_response"]
+            lip = row["last_ip"]
             needs_update = False
             if pid and not pid.startswith("gAAAAA"):
                 pid = self._encrypt(pid)
@@ -170,24 +237,16 @@ class Database:
     # ─────────────────── Пользователи ─────────────────────────────
 
     async def ensure_user(self, telegram_id: int) -> None:
-        """Создаёт запись в users если не существует."""
-        await self._conn.execute(
-            "INSERT OR IGNORE INTO users (telegram_id) VALUES (?)", (telegram_id,)
-        )
+        await self._conn.execute("INSERT OR IGNORE INTO users (telegram_id) VALUES (?)", (telegram_id,))
         await self._conn.commit()
 
     async def get_user_banned(self, telegram_id: int) -> bool:
-        async with self._conn.execute(
-            "SELECT banned FROM users WHERE telegram_id=?", (telegram_id,)
-        ) as cur:
+        async with self._conn.execute("SELECT banned FROM users WHERE telegram_id=?", (telegram_id,)) as cur:
             row = await cur.fetchone()
             return bool(row["banned"]) if row else False
 
     async def set_user_banned(self, telegram_id: int, banned: bool) -> None:
-        await self._conn.execute(
-            "UPDATE users SET banned=? WHERE telegram_id=?",
-            (1 if banned else 0, telegram_id),
-        )
+        await self._conn.execute("UPDATE users SET banned=? WHERE telegram_id=?", (1 if banned else 0, telegram_id))
         await self._conn.commit()
 
     async def get_all_telegram_ids(self) -> list[int]:
@@ -197,31 +256,21 @@ class Database:
     # ─────────────────── Профили ──────────────────────────────────
 
     async def get_profiles(self, telegram_id: int) -> list[dict]:
-        """Все профили пользователя."""
-        async with self._conn.execute(
-            "SELECT * FROM vpn_profiles WHERE telegram_id=? ORDER BY created_at",
-            (telegram_id,),
-        ) as cur:
+        async with self._conn.execute("SELECT * FROM vpn_profiles WHERE telegram_id=? ORDER BY created_at", (telegram_id,)) as cur:
             return [self._profile_row_to_dict(r) for r in await cur.fetchall()]
 
     async def get_profile_by_id(self, profile_id: int) -> Optional[dict]:
-        async with self._conn.execute(
-            "SELECT * FROM vpn_profiles WHERE id=?", (profile_id,)
-        ) as cur:
+        async with self._conn.execute("SELECT * FROM vpn_profiles WHERE id=?", (profile_id,)) as cur:
             row = await cur.fetchone()
             return self._profile_row_to_dict(row) if row else None
 
     async def get_profile_by_name(self, vpn_name: str) -> Optional[dict]:
-        async with self._conn.execute(
-            "SELECT * FROM vpn_profiles WHERE vpn_name=?", (vpn_name,)
-        ) as cur:
+        async with self._conn.execute("SELECT * FROM vpn_profiles WHERE vpn_name=?", (vpn_name,)) as cur:
             row = await cur.fetchone()
             return self._profile_row_to_dict(row) if row else None
 
     async def count_profiles(self, telegram_id: int) -> int:
-        async with self._conn.execute(
-            "SELECT COUNT(*) FROM vpn_profiles WHERE telegram_id=?", (telegram_id,)
-        ) as cur:
+        async with self._conn.execute("SELECT COUNT(*) FROM vpn_profiles WHERE telegram_id=?", (telegram_id,)) as cur:
             row = await cur.fetchone()
             return row[0] if row else 0
 
@@ -229,18 +278,13 @@ class Database:
         return await self.count_profiles(telegram_id) < MAX_PROFILES_PER_USER
 
     async def is_vpn_name_taken(self, vpn_name: str) -> bool:
-        async with self._conn.execute(
-            "SELECT 1 FROM vpn_profiles WHERE vpn_name=?", (vpn_name,)
-        ) as cur:
+        async with self._conn.execute("SELECT 1 FROM vpn_profiles WHERE vpn_name=?", (vpn_name,)) as cur:
             return await cur.fetchone() is not None
 
-    async def add_profile(self, telegram_id: int, vpn_name: str,
-                          peer_id: Optional[str], raw_response: str) -> int:
-        """Добавляет профиль, возвращает его id. Создаёт users-запись если нет."""
+    async def add_profile(self, telegram_id: int, vpn_name: str, peer_id: Optional[str], raw_response: str) -> int:
         await self.ensure_user(telegram_id)
         cur = await self._conn.execute(
-            """INSERT INTO vpn_profiles (telegram_id, vpn_name, peer_id, raw_response)
-               VALUES (?, ?, ?, ?)""",
+            """INSERT INTO vpn_profiles (telegram_id, vpn_name, peer_id, raw_response) VALUES (?, ?, ?, ?)""",
             (telegram_id, vpn_name, self._encrypt(peer_id), self._encrypt(raw_response)),
         )
         await self._conn.commit()
@@ -248,60 +292,33 @@ class Database:
         return cur.lastrowid
 
     async def delete_profile(self, profile_id: int) -> bool:
-        cur = await self._conn.execute(
-            "DELETE FROM vpn_profiles WHERE id=?", (profile_id,)
-        )
+        cur = await self._conn.execute("DELETE FROM vpn_profiles WHERE id=?", (profile_id,))
         await self._conn.commit()
-        # Удаляем запись users если профилей не осталось
-        async with self._conn.execute(
-            """SELECT telegram_id FROM vpn_profiles
-               WHERE telegram_id=(SELECT telegram_id FROM vpn_profiles WHERE id=?)
-               LIMIT 1""",
-            (profile_id,)
-        ) as check:
-            pass  # profile уже удалён, не найдём
         return cur.rowcount > 0
 
     async def delete_profile_by_name(self, vpn_name: str) -> bool:
-        cur = await self._conn.execute(
-            "DELETE FROM vpn_profiles WHERE vpn_name=?", (vpn_name,)
-        )
+        cur = await self._conn.execute("DELETE FROM vpn_profiles WHERE vpn_name=?", (vpn_name,))
         await self._conn.commit()
         return cur.rowcount > 0
 
     async def delete_all_profiles(self, telegram_id: int) -> int:
-        cur = await self._conn.execute(
-            "DELETE FROM vpn_profiles WHERE telegram_id=?", (telegram_id,)
-        )
+        cur = await self._conn.execute("DELETE FROM vpn_profiles WHERE telegram_id=?", (telegram_id,))
         await self._conn.commit()
         return cur.rowcount
 
     async def set_profile_disabled(self, profile_id: int, disabled: bool) -> None:
-        await self._conn.execute(
-            "UPDATE vpn_profiles SET disabled=? WHERE id=?",
-            (1 if disabled else 0, profile_id),
-        )
+        await self._conn.execute("UPDATE vpn_profiles SET disabled=? WHERE id=?", (1 if disabled else 0, profile_id))
         await self._conn.commit()
 
     async def set_last_ip(self, profile_id: int, ip: str) -> None:
-        await self._conn.execute(
-            "UPDATE vpn_profiles SET last_ip=? WHERE id=?",
-            (self._encrypt(ip), profile_id),
-        )
+        await self._conn.execute("UPDATE vpn_profiles SET last_ip=? WHERE id=?", (self._encrypt(ip), profile_id))
         await self._conn.commit()
 
     # ─────────────────── Сводные запросы ──────────────────────────
 
     async def get_all_users_with_profiles(self) -> list[dict]:
-        """
-        Возвращает список пользователей с вложенным списком профилей.
-        Формат: [{telegram_id, banned, created_at, profiles: [...]}, ...]
-        """
-        async with self._conn.execute(
-            "SELECT * FROM users ORDER BY created_at DESC"
-        ) as cur:
+        async with self._conn.execute("SELECT * FROM users ORDER BY created_at DESC") as cur:
             user_rows = await cur.fetchall()
-
         result = []
         for u in user_rows:
             profiles = await self.get_profiles(u["telegram_id"])
@@ -314,24 +331,16 @@ class Database:
         return result
 
     async def get_all_profiles(self) -> list[dict]:
-        """Все профили всех пользователей (для CSV-экспорта и т.п.)."""
-        async with self._conn.execute(
-            "SELECT * FROM vpn_profiles ORDER BY created_at DESC"
-        ) as cur:
+        async with self._conn.execute("SELECT * FROM vpn_profiles ORDER BY created_at DESC") as cur:
             return [self._profile_row_to_dict(r) for r in await cur.fetchall()]
 
     async def search_users(self, query: str) -> list[dict]:
-        """
-        Поиск по имени профиля (подстрока) или telegram_id.
-        Возвращает список пользователей (с профилями).
-        """
         q = f"%{query.lower()}%"
         async with self._conn.execute(
             """SELECT DISTINCT u.telegram_id, u.banned, u.created_at
                FROM users u
                LEFT JOIN vpn_profiles p ON p.telegram_id = u.telegram_id
-               WHERE LOWER(p.vpn_name) LIKE ?
-                  OR CAST(u.telegram_id AS TEXT) = ?
+               WHERE LOWER(p.vpn_name) LIKE ? OR CAST(u.telegram_id AS TEXT) = ?
                ORDER BY u.created_at DESC""",
             (q, query),
         ) as cur:
@@ -348,20 +357,10 @@ class Database:
             })
         return result
 
-    # ─────────────────── Legacy-совместимость ─────────────────────
-    # (для BannedUserMiddleware и мест, где ожидается единственный профиль)
-
     async def get_user(self, telegram_id: int) -> Optional[dict]:
-        """
-        Возвращает dict с полями: telegram_id, banned, profiles.
-        Если у пользователя нет профилей — возвращает None.
-        """
-        async with self._conn.execute(
-            "SELECT * FROM users WHERE telegram_id=?", (telegram_id,)
-        ) as cur:
+        async with self._conn.execute("SELECT * FROM users WHERE telegram_id=?", (telegram_id,)) as cur:
             row = await cur.fetchone()
-        if not row:
-            return None
+        if not row: return None
         profiles = await self.get_profiles(telegram_id)
         return {
             "telegram_id": telegram_id,
@@ -369,3 +368,99 @@ class Database:
             "created_at": row["created_at"],
             "profiles": profiles,
         }
+
+    # ─────────────────── Секретные ключи ──────────────────────────
+
+    async def create_secret_key(self, telegram_id: int, key_value: str) -> int:
+        await self.ensure_user(telegram_id)
+        await self._conn.execute("DELETE FROM secret_keys WHERE telegram_id=?", (telegram_id,))
+        cur = await self._conn.execute(
+            "INSERT INTO secret_keys (telegram_id, key_value) VALUES (?, ?)",
+            (telegram_id, key_value),
+        )
+        await self._conn.commit()
+        return cur.lastrowid
+
+    async def get_secret_key_by_value(self, key_value: str) -> Optional[dict]:
+        async with self._conn.execute("SELECT * FROM secret_keys WHERE key_value=?", (key_value,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def get_secret_key_by_user(self, telegram_id: int) -> Optional[dict]:
+        async with self._conn.execute("SELECT * FROM secret_keys WHERE telegram_id=?", (telegram_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def revoke_secret_key(self, key_id: int) -> bool:
+        cur = await self._conn.execute("UPDATE secret_keys SET revoked=1 WHERE id=?", (key_id,))
+        await self._conn.commit()
+        return cur.rowcount > 0
+
+    async def revoke_secret_key_by_user(self, telegram_id: int) -> bool:
+        cur = await self._conn.execute("DELETE FROM secret_keys WHERE telegram_id=?", (telegram_id,))
+        await self._conn.commit()
+        return cur.rowcount > 0
+
+    async def set_key_used(self, key_id: int) -> None:
+        await self._conn.execute(
+            "UPDATE secret_keys SET used=1, used_at=datetime('now','localtime') WHERE id=?",
+            (key_id,),
+        )
+        await self._conn.commit()
+
+    async def get_all_secret_keys(self) -> list[dict]:
+        async with self._conn.execute("SELECT * FROM secret_keys ORDER BY created_at DESC") as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def set_user_can_create_key(self, telegram_id: int, allowed: bool) -> None:
+        await self.ensure_user(telegram_id)
+        await self._conn.execute(
+            "UPDATE users SET key_blocked=? WHERE telegram_id=?",
+            (0 if allowed else 1, telegram_id),
+        )
+        await self._conn.commit()
+
+    async def get_user_key_blocked(self, telegram_id: int) -> bool:
+        async with self._conn.execute("SELECT key_blocked FROM users WHERE telegram_id=?", (telegram_id,)) as cur:
+            row = await cur.fetchone()
+            if not row: return False
+            keys = row.keys() if hasattr(row, "keys") else []
+            return bool(row["key_blocked"]) if "key_blocked" in keys else False
+
+    # ─────────────────── Короткие ссылки ──────────────────────────
+
+    async def _cleanup_expired_short_links(self):
+        """Удаляет ссылки старше 24 часов"""
+        try:
+            await self._conn.execute(
+                "DELETE FROM short_links WHERE datetime(created_at) <= datetime('now', 'localtime', '-1 day')"
+            )
+            await self._conn.commit()
+        except Exception as e:
+            logger.error("Error cleaning up short links: %s", e)
+
+    async def get_or_create_short_link(self, profile_id: int, slug: str) -> str:
+        await self._cleanup_expired_short_links()
+        async with self._conn.execute(
+            "SELECT slug FROM short_links WHERE profile_id=?", (profile_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            if row: return row["slug"]
+        await self._conn.execute(
+            "INSERT OR IGNORE INTO short_links (profile_id, slug) VALUES (?, ?)",
+            (profile_id, slug),
+        )
+        await self._conn.commit()
+        return slug
+
+    async def get_short_link_by_slug(self, slug: str) -> Optional[dict]:
+        await self._cleanup_expired_short_links()
+        async with self._conn.execute("SELECT * FROM short_links WHERE slug=?", (slug,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def get_short_link_by_profile(self, profile_id: int) -> Optional[str]:
+        await self._cleanup_expired_short_links()
+        async with self._conn.execute("SELECT slug FROM short_links WHERE profile_id=?", (profile_id,)) as cur:
+            row = await cur.fetchone()
+            return row["slug"] if row else None

@@ -1,3 +1,7 @@
+"""
+Конфигурация бота. Загружает переменные из .env файла.
+"""
+
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
 
@@ -22,7 +26,14 @@ class Settings(BaseSettings):
     # Mini App (Flask)
     MINIAPP_HOST: str = "0.0.0.0"
     MINIAPP_PORT: int = 5000
-    MINIAPP_DEV_MODE: bool = False
+    MINIAPP_DEV_MODE: bool = False  # True = пропускать проверку подписи Telegram
+
+    # Web сервис (публичный сайт для подключения по ключу)
+    WEB_HOST: str = "0.0.0.0"
+    WEB_PORT: int = 5001
+
+    # Домен для сокращённых ссылок (например dqpq.ru)
+    SHORT_LINK_DOMAIN: str = "dqpq.ru"
 
     @field_validator("ADMIN_IDS", mode="before")
     @classmethod

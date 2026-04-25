@@ -1,7 +1,7 @@
 """
 Асинхронный клиент для Amnezia Admin API.
 
-Эндпоинты:
+Подтверждённые эндпоинты:
   GET    /clients     → {total, items:[{username, peers:[{id,name,status,...}]}]}
   POST   /clients     → {message, client:{id, config, protocol}}
   PATCH  /clients     → обновить (clientId, status, ...)

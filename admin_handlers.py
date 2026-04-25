@@ -1,6 +1,12 @@
 """
 admin_handlers.py — все хендлеры и FSM-состояния админ-панели.
 
+Новая механика (мультипрофили):
+  - Список: пользователи идентифицируются по telegram_id
+  - Карточка пользователя показывает все его профили
+  - Каждый профиль можно отключить/включить или удалить отдельно
+  - Бан/разбан — уровень пользователя (влияет на все профили)
+  - Статистика считается по telegram_id через профили
 """
 
 import asyncio
@@ -1200,6 +1206,178 @@ async def cb_admin_export_csv(callback: CallbackQuery, state: FSMContext, db: Da
     await push_side_msg(state, sent.message_id)
 
 
+# ──────────────────────── Управление секретными ключами ──────────────
+
+async def _delete_user_profiles_from_amnezia(
+    tg_id: int, db: Database, amnezia: AmneziaClient
+) -> tuple[int, int]:
+    """
+    Удаляет все VPN-профили пользователя из Amnezia API и из БД.
+    Возвращает (успешно_удалено, ошибок).
+    """
+    profiles = await db.get_profiles(tg_id)
+    ok = fail = 0
+    for p in profiles:
+        peer_id = p.get("peer_id")
+        try:
+            if peer_id:
+                await amnezia.delete_user(peer_id)
+            await db.delete_profile(p["id"])
+            ok += 1
+        except Exception as e:
+            logger.warning("Не удалось удалить профиль %s (tg=%d): %s", p["vpn_name"], tg_id, e)
+            fail += 1
+    return ok, fail
+
+
+async def cb_admin_keys(callback: CallbackQuery, db: Database, amnezia: AmneziaClient):
+    """Список всех секретных ключей."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа.", show_alert=True)
+        return
+
+    await safe_edit(callback.message, "⏳ Загружаю ключи…")
+    await callback.answer()
+
+    keys = await db.get_all_secret_keys()
+
+    if not keys:
+        await safe_edit(
+            callback.message,
+            "🗝 <b>Секретные ключи</b>\n\nКлючей нет.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔧 Панель", callback_data="admin_panel")],
+            ]),
+        )
+        return
+
+    lines = []
+    for k in keys[:30]:
+        tg_id = k["telegram_id"]
+        key_short = k["key_value"][:8] + "…"
+        used = "✅ использован" if k.get("used") else "⏳ активен"
+        revoked = " 🚫 отозван" if k.get("revoked") else ""
+        created = k.get("created_at", "—")[:10]
+        lines.append(
+            f"• <code>{tg_id}</code> — <code>{html.escape(key_short)}</code>"
+            f"\n  {used}{revoked} · {created}"
+        )
+
+    kb_rows = []
+    for k in keys[:15]:
+        if not k.get("revoked"):
+            tg_id = k["telegram_id"]
+            kb_rows.append([
+                InlineKeyboardButton(
+                    text=f"🚫 Отозвать ключ {tg_id}",
+                    callback_data=f"admin_key_revoke:{k['id']}:{tg_id}",
+                ),
+                InlineKeyboardButton(
+                    text=f"{'✅ Разреш' if await db.get_user_key_blocked(tg_id) else '🔒 Запрет'} ключи",
+                    callback_data=f"admin_key_block:{tg_id}",
+                ),
+            ])
+
+    kb_rows.append([InlineKeyboardButton(text="🔧 Панель", callback_data="admin_panel")])
+
+    await safe_edit(
+        callback.message,
+        f"🗝 <b>Секретные ключи</b> ({len(keys)} шт.)\n\n"
+        + "\n\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
+    )
+
+
+async def cb_admin_key_revoke(callback: CallbackQuery, db: Database, amnezia: AmneziaClient):
+    """Отзыв конкретного ключа + удаление всех VPN-профилей пользователя."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    if len(parts) < 3:
+        await callback.answer("❌ Некорректные данные.", show_alert=True)
+        return
+
+    key_id = _safe_int(parts[1], -1)
+    tg_id = _safe_int(parts[2], -1)
+
+    if key_id < 0:
+        await callback.answer("❌ Некорректный ID.", show_alert=True)
+        return
+
+    ok = await db.revoke_secret_key(key_id)
+    if ok:
+        # Удаляем все VPN-профили пользователя из Amnezia и БД
+        deleted_ok, deleted_fail = await _delete_user_profiles_from_amnezia(tg_id, db, amnezia)
+        note = f" Профилей удалено: {deleted_ok}" + (f", ошибок: {deleted_fail}" if deleted_fail else "")
+        await callback.answer(f"✅ Ключ пользователя {tg_id} отозван.{note}", show_alert=bool(deleted_ok or deleted_fail))
+        try:
+            await callback.bot.send_message(
+                tg_id,
+                "🔑 Ваш секретный ключ был <b>отозван</b> администратором.\n"
+                "Все ваши VPN-профили были <b>удалены</b>.\n"
+                "Создайте новый ключ через /mykey",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+    else:
+        await callback.answer("❌ Ключ не найден.")
+
+    # Перезагружаем список
+    await cb_admin_keys(callback, db, amnezia)
+
+
+async def cb_admin_key_block(callback: CallbackQuery, db: Database, amnezia: AmneziaClient):
+    """Блокирует/разблокирует возможность создавать ключи для пользователя.
+    При блокировке — удаляет все VPN-профили пользователя."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа.", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    if len(parts) < 2:
+        await callback.answer("❌ Некорректные данные.", show_alert=True)
+        return
+
+    tg_id = _safe_int(parts[1], -1)
+    if tg_id < 0:
+        await callback.answer("❌ Некорректный ID.", show_alert=True)
+        return
+
+    currently_blocked = await db.get_user_key_blocked(tg_id)
+    await db.set_user_can_create_key(tg_id, currently_blocked)  # инвертируем
+
+    if not currently_blocked:
+        # Блокируем — удаляем все профили
+        deleted_ok, deleted_fail = await _delete_user_profiles_from_amnezia(tg_id, db, amnezia)
+        note = f" Профилей удалено: {deleted_ok}" + (f", ошибок: {deleted_fail}" if deleted_fail else "")
+        action = f"🔒 Создание ключей запрещено.{note}"
+        try:
+            await callback.bot.send_message(
+                tg_id,
+                "🔒 Создание секретных ключей для вашего аккаунта <b>заблокировано</b> администратором.\n"
+                "Все ваши VPN-профили были <b>удалены</b>.",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+    else:
+        action = "✅ Создание ключей разрешено"
+        try:
+            await callback.bot.send_message(
+                tg_id,
+                "✅ Создание секретных ключей для вашего аккаунта <b>разрешено</b>.",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            pass
+
+    await callback.answer(f"ID {tg_id}: {action}", show_alert=not currently_blocked)
+    await cb_admin_keys(callback, db, amnezia)
+
+
 # ──────────────────────── Регистрация ────────────────────────────────
 
 def register_admin_handlers(dp: Dispatcher) -> None:
@@ -1228,3 +1406,6 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.callback_query.register(cb_admin_broadcast,         F.data == "admin_broadcast")
     dp.callback_query.register(cb_admin_broadcast_do,      F.data == "admin_broadcast_do")
     dp.callback_query.register(cb_admin_export_csv,        F.data == "admin_export_csv")
+    dp.callback_query.register(cb_admin_keys,              F.data == "admin_keys")
+    dp.callback_query.register(cb_admin_key_revoke,        F.data.startswith("admin_key_revoke:"))
+    dp.callback_query.register(cb_admin_key_block,         F.data.startswith("admin_key_block:"))

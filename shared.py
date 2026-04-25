@@ -1,12 +1,16 @@
 """
 shared.py — общие утилиты, хелперы и клавиатуры.
+Импортируется как bot.py, так и admin_handlers.py.
 """
 
 import html
 import time
+import hmac
+import hashlib
+import subprocess
+import re
 from math import ceil
 from typing import Any
-
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
@@ -21,6 +25,67 @@ from config import settings
 from database import MAX_PROFILES_PER_USER
 
 PAGE_SIZE = 10  # пользователей на страницу в списке
+
+
+def generate_dynamic_token() -> str:
+    """
+    Генерирует постоянно меняющийся токен на основе текущего времени.
+    Защищает публичные POST-запросы от спама и повторного использования (Replay attacks).
+    """
+    ts = int(time.time())
+    msg = f"{ts}".encode('utf-8')
+    sig = hmac.new(settings.DB_ENCRYPTION_KEY.encode(), msg, hashlib.sha256).hexdigest()
+    return f"{ts}.{sig}"
+
+
+def verify_dynamic_token(token: str, max_age_seconds: int = 300) -> bool:
+    """
+    Проверяет подлинность токена и его срок годности (по умолчанию 5 минут).
+    """
+    if not token or '.' not in token:
+        return False
+    try:
+        ts_str, sig = token.split('.', 1)
+        ts = int(ts_str)
+        
+        if int(time.time()) - ts > max_age_seconds:
+            return False
+            
+        expected_sig = hmac.new(settings.DB_ENCRYPTION_KEY.encode(), ts_str.encode('utf-8'), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(sig, expected_sig)
+    except Exception:
+        return False
+
+
+# ──────────────────────────── Пинг (глобальный кэш) ─────────────────
+_ping_cache = {"ms": 0, "ts": 0}
+_PING_TTL = 180  # 3 минуты (180 секунд)
+
+def get_shared_ping(host: str, api_url: str) -> int:
+    """Один пинг на всех пользователей (обновляется раз в 3 минуты)."""
+    now = time.monotonic()
+    if _ping_cache["ms"] == 0 or (now - _ping_cache["ts"]) >= _PING_TTL:
+        ms = 0
+        try:
+            res = subprocess.run(["ping", "-c", "1", "-W", "2", host], capture_output=True, text=True, timeout=5)
+            m = re.search(r"time=(\d+\.?\d*)\s*ms", res.stdout)
+            if m: ms = round(float(m.group(1)))
+        except Exception:
+            pass
+        
+        if ms == 0:
+            try:
+                t0 = time.monotonic()
+                import urllib.request
+                urllib.request.urlopen(api_url + "/healthz", timeout=3)
+                ms = round((time.monotonic() - t0) * 1000)
+            except Exception:
+                pass
+                
+        _ping_cache["ms"] = ms
+        _ping_cache["ts"] = now
+        
+    return _ping_cache["ms"]
 
 
 # ──────────────────────────── Права ─────────────────────────────────
@@ -61,9 +126,6 @@ def fmt_handshake(ts: int) -> str:
 
 
 def menu_text(user_data: dict | None, notice: str = "") -> str:
-    """
-    user_data = {telegram_id, banned, profiles: [...]} или None.
-    """
     prefix = f"<i>{html.escape(notice)}</i>\n\n" if notice else ""
 
     if user_data is None:
@@ -78,10 +140,7 @@ def menu_text(user_data: dict | None, notice: str = "") -> str:
     lines = []
     for p in profiles:
         name = html.escape(p["vpn_name"])
-        if banned or p.get("disabled"):
-            icon = "🚫"
-        else:
-            icon = "✅"
+        icon = "🚫" if banned or p.get("disabled") else "✅"
         lines.append(f"{icon} <b>{name}</b>")
 
     status_block = "\n".join(lines)
@@ -96,8 +155,7 @@ def menu_text(user_data: dict | None, notice: str = "") -> str:
 
 # ──────────────────────────── Aiogram helpers ───────────────────────
 
-async def safe_edit(msg: Message, text: str,
-                    reply_markup=None, parse_mode=ParseMode.HTML) -> None:
+async def safe_edit(msg: Message, text: str, reply_markup=None, parse_mode=ParseMode.HTML) -> None:
     try:
         await msg.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
     except TelegramBadRequest as e:
@@ -140,7 +198,6 @@ def find_peer_in_clients(clients_data: dict | None, username: str) -> dict | Non
 
 
 def count_online_peers(clients_data: dict | None) -> tuple[int, int]:
-    """Возвращает (онлайн, всего пиров)."""
     if not clients_data:
         return 0, 0
     total = online = 0
@@ -213,10 +270,6 @@ def kb_main(has_profiles: bool, can_create: bool, admin: bool = False) -> Inline
 
 
 def kb_profile_select(profiles: list[dict], action: str) -> InlineKeyboardMarkup:
-    """
-    Кнопки выбора конкретного профиля.
-    action: 'get_config' | 'my_info'
-    """
     rows = []
     for p in profiles:
         name = html.escape(p["vpn_name"])
@@ -232,7 +285,6 @@ def kb_profile_select(profiles: list[dict], action: str) -> InlineKeyboardMarkup
 
 
 def kb_my_profiles(profiles: list[dict]) -> InlineKeyboardMarkup:
-    """Меню «Мои профили» — список с кнопками просмотра и удаления."""
     rows = []
     for p in profiles:
         name = html.escape(p["vpn_name"])
@@ -252,7 +304,6 @@ def kb_my_profiles(profiles: list[dict]) -> InlineKeyboardMarkup:
 
 
 def kb_user_del_confirm(profile_id: int, vpn_name: str) -> InlineKeyboardMarkup:
-    """Подтверждение удаления профиля пользователем."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
@@ -265,7 +316,6 @@ def kb_user_del_confirm(profile_id: int, vpn_name: str) -> InlineKeyboardMarkup:
 
 
 def kb_admin_panel() -> InlineKeyboardMarkup:
-    """Главное меню админ-панели."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_list:0"),
@@ -278,6 +328,9 @@ def kb_admin_panel() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="🔒 Блокировки",   callback_data="admin_ban_menu"),
             InlineKeyboardButton(text="🔎 Пиры Amnezia", callback_data="admin_all_peers"),
+        ],
+        [
+            InlineKeyboardButton(text="🗝 Секретные ключи", callback_data="admin_keys"),
         ],
         [
             InlineKeyboardButton(text="📋 Экспорт CSV",  callback_data="admin_export_csv"),
@@ -335,8 +388,6 @@ def kb_server_status() -> InlineKeyboardMarkup:
     ])
 
 
-# ──────────────────────────── Админ: список пользователей ───────────
-
 def kb_admin_list(users_page: list[dict], page: int, total_pages: int) -> InlineKeyboardMarkup:
     rows = []
     for u in users_page:
@@ -371,9 +422,7 @@ def kb_admin_list(users_page: list[dict], page: int, total_pages: int) -> Inline
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def kb_user_card(tg_id: int, banned: bool, page: int,
-                 profiles: list[dict]) -> InlineKeyboardMarkup:
-    """Карточка пользователя: бан + кнопки управления профилями."""
+def kb_user_card(tg_id: int, banned: bool, page: int, profiles: list[dict]) -> InlineKeyboardMarkup:
     ban_text = "✅ Разбанить" if banned else "🚫 Заблокировать"
     rows = [
         [
@@ -388,7 +437,6 @@ def kb_user_card(tg_id: int, banned: bool, page: int,
         ]
     ]
 
-    # Кнопки профилей
     for p in profiles:
         name = html.escape(p["vpn_name"])
         dis = p.get("disabled", False)

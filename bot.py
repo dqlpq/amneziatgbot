@@ -1,3 +1,7 @@
+"""
+AmneziaVPN Telegram Bot — мультипрофильная версия
+"""
+
 import asyncio
 import html
 import json
@@ -31,6 +35,7 @@ from shared import (
     kb_profile_select, kb_my_profiles, kb_server_status,
     kb_user_del_confirm,
 )
+from web_service import generate_secret_key
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -179,6 +184,86 @@ async def cmd_start(message: Message, state: FSMContext, db: Database):
 
 async def cmd_menu(message: Message, state: FSMContext, db: Database):
     await cmd_start(message, state, db)
+
+
+async def cmd_mykey(message: Message, db: Database):
+    """Генерирует или показывает секретный ключ пользователя для веб-сервиса."""
+    uid = message.from_user.id if message.from_user else None
+    if uid is None or not is_allowed(uid):
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    # Проверяем блокировку
+    blocked = await db.get_user_key_blocked(uid)
+    if blocked:
+        await message.answer(
+            "🚫 Создание ключей для вашего аккаунта заблокировано администратором.",
+            parse_mode="HTML",
+        )
+        return
+
+    # Проверяем существующий ключ
+    existing = await db.get_secret_key_by_user(uid)
+    if existing and not existing.get("revoked"):
+        key_val = existing["key_value"]
+        used = existing.get("used")
+        status = "✅ Использован" if used else "⏳ Ожидает использования"
+        domain = settings.SHORT_LINK_DOMAIN.rstrip("/") if hasattr(settings, "SHORT_LINK_DOMAIN") else "dqpq.ru"
+        await message.answer(
+            f"🔑 <b>Ваш секретный ключ</b>\n\n"
+            f"<code>{html.escape(key_val)}</code>\n\n"
+            f"Статус: {status}\n\n"
+            f"Используйте этот ключ на сайте <b>https://{html.escape(domain)}</b> "
+            f"для создания VPN-профиля без Telegram.\n\n"
+            f"⚠️ Один ключ — один профиль. Для нового ключа — /newkey",
+            parse_mode="HTML",
+        )
+        return
+
+    # Генерируем новый ключ
+    key_val = generate_secret_key()
+    await db.create_secret_key(uid, key_val)
+    domain = settings.SHORT_LINK_DOMAIN.rstrip("/") if hasattr(settings, "SHORT_LINK_DOMAIN") else "dqpq.ru"
+    await message.answer(
+        f"🔑 <b>Ваш секретный ключ создан</b>\n\n"
+        f"<code>{html.escape(key_val)}</code>\n\n"
+        f"Перейдите на <b>https://{html.escape(domain)}</b>, введите этот ключ "
+        f"и имя профиля для получения конфигурации VPN.\n\n"
+        f"⚠️ Ключ одноразовый. Не передавайте его другим людям.",
+        parse_mode="HTML",
+    )
+
+
+async def cmd_newkey(message: Message, db: Database):
+    """Перегенерирует секретный ключ."""
+    uid = message.from_user.id if message.from_user else None
+    if uid is None or not is_allowed(uid):
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    blocked = await db.get_user_key_blocked(uid)
+    if blocked:
+        await message.answer("🚫 Создание ключей заблокировано администратором.", parse_mode="HTML")
+        return
+
+    key_val = generate_secret_key()
+    await db.create_secret_key(uid, key_val)
+    domain = settings.SHORT_LINK_DOMAIN.rstrip("/") if hasattr(settings, "SHORT_LINK_DOMAIN") else "dqpq.ru"
+    await message.answer(
+        f"🔑 <b>Новый секретный ключ создан</b>\n\n"
+        f"<code>{html.escape(key_val)}</code>\n\n"
+        f"Старый ключ аннулирован. Используйте новый на сайте "
+        f"<b>https://{html.escape(domain)}</b>",
+        parse_mode="HTML",
+    )
 
 
 async def catch_all_messages(message: Message):
@@ -704,8 +789,10 @@ async def cb_server_status(callback: CallbackQuery, amnezia: AmneziaClient):
 
 async def set_bot_commands(bot: Bot):
     commands = [
-        BotCommand(command="start", description="🏠 Главное меню"),
-        BotCommand(command="menu",  description="🏠 Открыть меню"),
+        BotCommand(command="start",  description="🏠 Главное меню"),
+        BotCommand(command="menu",   description="🏠 Открыть меню"),
+        BotCommand(command="mykey",  description="🔑 Мой секретный ключ"),
+        BotCommand(command="newkey", description="🔄 Создать новый ключ"),
     ]
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 
@@ -739,8 +826,10 @@ async def main():
     dp.callback_query.middleware(banned_mw)
 
     # Команды
-    dp.message.register(cmd_start, CommandStart())
-    dp.message.register(cmd_menu,  Command("menu"))
+    dp.message.register(cmd_start,  CommandStart())
+    dp.message.register(cmd_menu,   Command("menu"))
+    dp.message.register(cmd_mykey,  Command("mykey"))
+    dp.message.register(cmd_newkey, Command("newkey"))
 
     # FSM
     dp.message.register(process_vpn_name, CreateUserStates.waiting_for_name, F.text)
